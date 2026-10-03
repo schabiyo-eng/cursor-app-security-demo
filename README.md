@@ -33,6 +33,14 @@ Open http://localhost:3000.
 4. Choose **Fix in Cursor**. The fix pull request needs the Jira key (`SEC-` followed by digits) in its title, head branch name, or body.
 5. Merge the fix pull request. The workflow below moves that issue to Done and comments with the PR link. Jira's own "pull request merged" rule can do this too; the workflow is the fallback.
 
+## How SAST fits the loop
+
+Semgrep (`.github/workflows/semgrep.yml`) is the deterministic CI gate. The same free Community Edition rules (`p/javascript`, `p/nodejs`, `p/expressjs`) run on every pull request and on pushes to `main`. No Semgrep account or token. Findings upload as code scanning alerts on the pull request. ERROR-severity findings fail the **SAST (Semgrep)** check, so that gate is repeatable and pattern-based.
+
+Cursor Security Reviewer is the context-aware pass on the same pull request. It explains the attack path, proposes a fix, and files one Jira issue per confirmed finding in project SEC.
+
+Both land in one backlog: code scanning alerts on the pull request, and SEC tickets in Jira.
+
 ## Jira close on merge
 
 Workflow: `.github/workflows/jira-close-on-merge.yml`
