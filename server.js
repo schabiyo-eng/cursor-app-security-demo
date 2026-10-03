@@ -186,7 +186,7 @@ app.get("/promo", (req, res) => {
 app.get("/go", (req, res) => {
   const next =
     typeof req.query.next === "string" && req.query.next ? req.query.next : "/";
-  res.redirect(next);
+  res.redirect(safeNext(next));
 });
 
 app.use((req, res) => {
