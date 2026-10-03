@@ -1,0 +1,126 @@
+name: Close Jira on merge
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  close-jira:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Transition Jira issue to done
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_DONE_STATUS: ${{ vars.JIRA_DONE_STATUS || 'Done' }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+          PR_HEAD: ${{ github.event.pull_request.head.ref }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+
+          status_name="${JIRA_DONE_STATUS:-Done}"
+          key=""
+          for source in "$PR_TITLE" "$PR_HEAD" "${PR_BODY:-}"; do
+            found="$(printf '%s' "$source" | grep -oE 'SEC-[0-9]+' | head -n 1 || true)"
+            if [ -n "$found" ]; then
+              key="$found"
+              break
+            fi
+          done
+
+          if [ -z "$key" ]; then
+            echo "No SEC-<number> key in the title, branch, or body. Nothing to do."
+            exit 0
+          fi
+
+          if [ -z "${JIRA_BASE_URL:-}" ] || [ -z "${JIRA_EMAIL:-}" ] || [ -z "${JIRA_API_TOKEN:-}" ]; then
+            echo "Found $key, but JIRA_BASE_URL, JIRA_EMAIL, or JIRA_API_TOKEN is not set."
+            exit 1
+          fi
+
+          base="${JIRA_BASE_URL%/}"
+          auth="$(printf '%s:%s' "$JIRA_EMAIL" "$JIRA_API_TOKEN" | base64 -w 0)"
+
+          jira() {
+            local method="$1"
+            local url="$2"
+            local data="${3:-}"
+            local raw code body
+            if [ -n "$data" ]; then
+              raw="$(curl -sS -w "\n%{http_code}" -X "$method" \
+                -H "Authorization: Basic $auth" \
+                -H "Accept: application/json" \
+                -H "Content-Type: application/json" \
+                --data "$data" \
+                "$url")"
+            else
+              raw="$(curl -sS -w "\n%{http_code}" -X "$method" \
+                -H "Authorization: Basic $auth" \
+                -H "Accept: application/json" \
+                "$url")"
+            fi
+            code="$(printf '%s\n' "$raw" | tail -n 1)"
+            body="$(printf '%s\n' "$raw" | sed '$d')"
+            if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+              echo "Jira $method $url failed with HTTP $code" >&2
+              printf '%s\n' "$body" >&2
+              exit 1
+            fi
+            printf '%s' "$body"
+          }
+
+          issue="$(jira GET "$base/rest/api/3/issue/$key?fields=status")"
+          current="$(printf '%s' "$issue" | jq -r '.fields.status.name // empty')"
+          echo "$key is currently '${current:-unknown}'."
+
+          if [ "$(printf '%s' "$current" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$status_name" | tr '[:upper:]' '[:lower:]')" ]; then
+            transitions="$(jira GET "$base/rest/api/3/issue/$key/transitions")"
+            transition_id="$(printf '%s' "$transitions" | jq -r --arg name "$status_name" '
+              (
+                [ .transitions[]?
+                  | select(.to.name != null)
+                  | select((.to.name | ascii_downcase) == ($name | ascii_downcase))
+                  | .id ] +
+                [ .transitions[]?
+                  | select(.name != null)
+                  | select((.name | ascii_downcase) == ($name | ascii_downcase))
+                  | .id ]
+              ) | first // empty
+            ')"
+            if [ -z "$transition_id" ]; then
+              echo "No transition to status '$status_name' for $key. Available:" >&2
+              printf '%s' "$transitions" | jq -r '.transitions[]? | "\(.id) \(.name) -> \(.to.name)"' >&2
+              exit 1
+            fi
+            echo "Transitioning $key via id $transition_id."
+            jira POST "$base/rest/api/3/issue/$key/transitions" \
+              "$(jq -n --arg id "$transition_id" '{transition: {id: $id}}')" >/dev/null
+          else
+            echo "$key is already $status_name. Skipping the transition."
+          fi
+
+          jira POST "$base/rest/api/3/issue/$key/comment" \
+            "$(jq -n --arg url "$PR_URL" --arg title "$PR_TITLE" --arg status "$status_name" '{
+              body: {
+                type: "doc",
+                version: 1,
+                content: [
+                  {
+                    type: "paragraph",
+                    content: [
+                      {type: "text", text: ("Moved to " + $status + " when this pull request merged: ")},
+                      {type: "text", text: $title, marks: [{type: "link", attrs: {href: $url}}]}
+                    ]
+                  }
+                ]
+              }
+            }')" >/dev/null
+
+          echo "Commented on $key with $PR_URL."

@@ -1,0 +1,16 @@
+{
+  "name": "row-nine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Demo-only event ticketing app. Do not deploy.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
