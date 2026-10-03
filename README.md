@@ -78,27 +78,48 @@ From today's dry run: scan plus filing takes about **6–7 minutes**. From **To 
 
 ## Flow
 
-```mermaid
-flowchart TD
-  dev[Developer opens a pull request]
-  scan[Semgrep and Security Agent scan]
-  file[Ticket filer creates a SEC ticket in To Do]
-  triage[AppSec moves the ticket to To Fix]
-  hook[Jira rule calls the Cursor webhook]
-  fixer[Ticket fixer sets In Progress and opens a fix PR]
-  rescan[Fix pull request is re-scanned]
-  review[AppSec reviews and merges]
-  done[Jira rule moves the ticket to Done]
+The fix pull request comes back to the same scan. A clean scan is what AppSec merges.
 
-  dev --> scan --> file --> triage --> hook --> fixer --> rescan --> review --> done
+```mermaid
+flowchart LR
+  dev[Developer opens a pull request]
+
+  subgraph cursorBox [Cursor automations]
+    scan[Semgrep and Cursor Security Agent scan]
+    filer[Ticket filer creates a SEC ticket in To Do]
+    fixer[Fixer sets In Progress and opens a fix PR]
+  end
+
+  findings{Medium+ findings?}
+  triage[AppSec moves the ticket to To Fix]
+  review[AppSec reviews and merges]
+
+  subgraph jiraBox [Jira]
+    hook[Jira rule calls the Cursor webhook]
+    mergeRule[Done on fix merge]
+    ticketDone[Ticket Done]
+  end
+
+  dev --> scan
+  scan --> findings
+  findings -->|yes| filer
+  filer --> triage
+  triage --> hook
+  hook --> fixer
+  fixer -->|re-scan fix PR| scan
+  findings -->|no / clean| review
+  review --> mergeRule
+  mergeRule --> ticketDone
 
   classDef appsec fill:#0f766e,color:#ffffff,stroke:#115e59
   classDef auto fill:#e2e8f0,color:#0f172a,stroke:#64748b
   classDef dev fill:#fef3c7,color:#0f172a,stroke:#d97706
+  classDef decide fill:#dbeafe,color:#0f172a,stroke:#2563eb
 
   class triage,review appsec
-  class scan,file,hook,fixer,rescan,done auto
+  class scan,filer,fixer,hook,mergeRule,ticketDone auto
   class dev dev
+  class findings decide
 ```
 
-Legend: **teal** is a person on the AppSec team. **amber** is the developer opening the pull request. **gray** is automation (Semgrep, Security Agent, ticket filer, Jira rules, ticket fixer).
+Legend: **teal** is a person on the AppSec team (triage to To Fix, then review and merge). **amber** is the developer opening the pull request. **gray** is automation, grouped as Cursor automations and Jira. **blue** is the Medium+ findings decision. The edge labeled **re-scan fix PR** is the loop back into the same scan.
