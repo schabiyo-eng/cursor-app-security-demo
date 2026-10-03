@@ -156,6 +156,7 @@ app.post("/login", (req, res) => {
   res.redirect(safeNext(req.body.next));
 });
 
+// rehearsal retrigger 3
 app.get("/promo", (req, res) => {
   const message =
     typeof req.query.message === "string"
