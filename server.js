@@ -176,7 +176,7 @@ app.get("/promo", (req, res) => {
          <input name="code" value="${escapeHtml(code)}" placeholder="Code">
          <button>Preview</button>
        </form>
-       <p class="banner">${message}</p>
+       <p class="banner">${escapeHtml(message)}</p>
        <p>Use code <strong>${escapeHtml(code)}</strong> at checkout.</p>
        <p><a href="/go?next=${encodeURIComponent(next)}">Continue to offer</a></p>`
     )
