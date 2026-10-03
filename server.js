@@ -53,13 +53,14 @@ function layout(title, body) {
     h1 { font-size: 1.6rem; margin: 1.2rem 0 0.4rem; }
     .muted { color: #57534e; }
     .card { border-top: 1px solid #e7e5e4; padding: 0.75rem 0; }
+    .banner { background: #ffedd5; padding: 0.55rem 0.75rem; }
     input, button { font: inherit; padding: 0.3rem 0.45rem; }
   </style>
 </head>
 <body>
   <header>
     <strong><a href="/">Row Nine</a></strong>
-    <nav><a href="/search">Search</a> · <a href="/login">Sign in</a></nav>
+    <nav><a href="/search">Search</a> · <a href="/promo">Promos</a> · <a href="/login">Sign in</a></nav>
   </header>
   ${body}
 </body>
@@ -83,7 +84,14 @@ app.get("/", (req, res) => {
       </article>`
     )
     .join("");
-  res.type("html").send(layout("Events", `<h1>On sale</h1>${cards}`));
+  res.type("html").send(
+    layout(
+      "Events",
+      `<h1>On sale</h1>
+       <p class="muted"><a href="/promo">Weekend promo</a> · codes and partner offers.</p>
+       ${cards}`
+    )
+  );
 });
 
 app.get("/events/:id", (req, res) => {
@@ -145,6 +153,38 @@ app.get("/login", (req, res) => {
 
 app.post("/login", (req, res) => {
   res.redirect(safeNext(req.body.next));
+});
+
+app.get("/promo", (req, res) => {
+  const message =
+    typeof req.query.message === "string"
+      ? req.query.message
+      : "Early bird pricing ends Sunday.";
+  const code = typeof req.query.code === "string" ? req.query.code : "EARLYBIRD";
+  const next =
+    typeof req.query.next === "string" && req.query.next
+      ? req.query.next
+      : "https://example.com/offers/early-bird";
+  res.type("html").send(
+    layout(
+      "Promo",
+      `<h1>Promo</h1>
+       <form action="/promo">
+         <input name="message" value="${escapeHtml(message)}" placeholder="Banner copy">
+         <input name="code" value="${escapeHtml(code)}" placeholder="Code">
+         <button>Preview</button>
+       </form>
+       <p class="banner">${message}</p>
+       <p>Use code <strong>${escapeHtml(code)}</strong> at checkout.</p>
+       <p><a href="/go?next=${encodeURIComponent(next)}">Continue to offer</a></p>`
+    )
+  );
+});
+
+app.get("/go", (req, res) => {
+  const next =
+    typeof req.query.next === "string" && req.query.next ? req.query.next : "/";
+  res.redirect(next);
 });
 
 app.use((req, res) => {
