@@ -1,3 +1,6 @@
+> [!WARNING]
+> This repository is **INTENTIONALLY VULNERABLE** and is for demonstration purposes only. It contains deliberately seeded security flaws (for example XSS and open redirect) used to demo Cursor Security Reviewer. Do not deploy it, do not expose it to the internet, and do not copy its code into real projects.
+
 # Row Nine
 
 > **INTENTIONALLY VULNERABLE — DEMO ONLY, do not deploy.**
