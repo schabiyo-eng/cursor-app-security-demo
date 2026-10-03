@@ -1,4 +1,4 @@
-// Promo links feature
+// Promo links feature (preview)
 const express = require("express");
 
 const app = express();
