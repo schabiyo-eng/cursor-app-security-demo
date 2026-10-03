@@ -72,3 +72,5 @@ Unset `JIRA_DONE_STATUS` means `Done`. The Jira user needs access to view the is
 ## Security Reviewer instructions
 
 `docs/security-reviewer-instructions.md`
+
+<!-- rehearsal 12: 2026-10-03 -->
