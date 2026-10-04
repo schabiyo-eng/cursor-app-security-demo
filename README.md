@@ -123,3 +123,5 @@ flowchart LR
 ```
 
 Legend: **teal** is a person on the AppSec team (triage to To Fix, then review and merge). **amber** is the developer opening the pull request. **gray** is automation, grouped as Cursor automations and Jira. **blue** is the Medium+ findings decision. The edge labeled **re-scan fix PR** is the loop back into the same scan.
+
+<!-- rehearsal 14: 2026-10-04 -->
