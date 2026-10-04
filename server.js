@@ -76,6 +76,14 @@ function safeNext(value) {
   return value;
 }
 
+// The promo Continue link leaves this origin only for this one partner offer.
+const PARTNER_OFFER = "https://example.com/offers/early-bird";
+
+function safeOffer(value) {
+  if (value === PARTNER_OFFER) return value;
+  return safeNext(value);
+}
+
 app.get("/", (req, res) => {
   const cards = events
     .map(
@@ -186,7 +194,7 @@ app.get("/promo", (req, res) => {
 app.get("/go", (req, res) => {
   const next =
     typeof req.query.next === "string" && req.query.next ? req.query.next : "/";
-  res.redirect(next);
+  res.redirect(safeOffer(next));
 });
 
 app.use((req, res) => {
