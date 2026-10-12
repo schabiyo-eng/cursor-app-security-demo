@@ -1,0 +1,637 @@
+name: Label needs-security-review from Bugbot
+
+# Edit this list to change which Bugbot findings request a security review.
+# High and Critical findings always qualify. Anything else qualifies when the
+# title or description matches a keyword below (case-insensitive).
+# Short tokens (xss, sql, auth, csrf, ssrf) match on word boundaries so
+# "auth" does not match "author". Longer tokens match as substrings, so
+# "secret" matches "secrets" and "deserializ" matches "deserialization".
+env:
+  SECURITY_LABEL: needs-security-review
+  COMMENT_POLL_MS: "45000"
+  COMMENT_POLL_INTERVAL_MS: "5000"
+  SECURITY_KEYWORDS: |
+    xss
+    cross-site scripting
+    cross-site-scripting
+    cross site scripting
+    injection
+    sql
+    ssrf
+    open redirect
+    open-redirect
+    auth
+    authentication
+    authorization
+    unauthenticated
+    unauthorized
+    secret
+    credential
+    path traversal
+    path-traversal
+    directory traversal
+    deserializ
+    csrf
+    cross-site request forgery
+
+# Bugbot finishes as a Cursor check run named "Cursor Bugbot". On the risky
+# fixture (PR #32) the cursor[bot] review was submitted about 3 seconds before
+# that check completed, and the finding text was only on the inline comments.
+# A clean run (PR #31) completes with "no issues found" and posts no review.
+# The review can also land after the check. Listen to both:
+#   - check_run completed, filtered to the Cursor Bugbot check
+#   - pull_request_review submitted by cursor[bot] carrying BUGBOT_REVIEW
+# Security Reviewer reviews as cursor[bot] too, without that marker, so it
+# does not label again. The second run sees the label and leaves it in place.
+on:
+  check_run:
+    types: [completed]
+  pull_request_review:
+    types: [submitted]
+
+# GITHUB_TOKEN only. A label added with this token does not start other
+# workflows, but GitHub still delivers the labeled webhook to GitHub Apps.
+permissions:
+  pull-requests: write
+  issues: write
+  checks: read
+
+concurrency:
+  group: bugbot-security-label-${{ github.repository }}-${{ github.event.pull_request.head.sha || github.event.check_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  label:
+    name: Label from Bugbot findings
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    if: >-
+      (
+        github.event_name == 'check_run' &&
+        github.event.check_run.name == 'Cursor Bugbot' &&
+        github.event.check_run.app.slug == 'cursor' &&
+        github.event.check_run.status == 'completed' &&
+        github.event.check_run.conclusion != 'cancelled' &&
+        github.event.check_run.conclusion != 'skipped' &&
+        !contains(github.event.check_run.output.summary, 'no issues found')
+      ) || (
+        github.event_name == 'pull_request_review' &&
+        github.event.review.user.login == 'cursor[bot]' &&
+        contains(github.event.review.body, 'BUGBOT_REVIEW') &&
+        github.event.review.commit_id == github.event.pull_request.head.sha
+      )
+    steps:
+      - name: Apply needs-security-review when findings qualify
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          script="${RUNNER_TEMP:-/tmp}/bugbot-security-label.js"
+          cat > "$script" << 'NODE'
+          const fs = require("fs");
+
+          const LABEL_DEFAULT = "needs-security-review";
+
+          function sleep(ms) {
+            return new Promise((resolve) => setTimeout(resolve, ms));
+          }
+
+          function parseKeywords(raw) {
+            return String(raw || "")
+              .split("\n")
+              .map((line) => line.trim())
+              .filter((line) => line && !line.startsWith("#"));
+          }
+
+          function bugbotReportedNoIssues(text) {
+            const value = String(text || "");
+            return (
+              /no issues found/i.test(value) ||
+              /found no (potential )?issues/i.test(value) ||
+              /found 0 potential issues/i.test(value)
+            );
+          }
+
+          function keywordHits(text, keywords) {
+            const haystack = String(text || "");
+            const lowered = haystack.toLowerCase();
+            const hits = [];
+            for (const raw of keywords || []) {
+              const keyword = String(raw || "").trim().toLowerCase();
+              if (!keyword || keyword.startsWith("#")) continue;
+              if (keyword.includes(" ") || keyword.length >= 6) {
+                if (lowered.includes(keyword)) hits.push(keyword);
+                continue;
+              }
+              const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              const pattern = new RegExp(`(?:^|[^a-z0-9])${escaped}(?:[^a-z0-9]|$)`, "i");
+              if (pattern.test(haystack)) hits.push(keyword);
+            }
+            return hits;
+          }
+
+          function visibleText(value) {
+            return String(value || "")
+              .replace(/<[^>]+>/g, " ")
+              .replace(/&nbsp;/g, " ")
+              .replace(/&amp;/g, "&")
+              .replace(/&lt;/g, "<")
+              .replace(/&gt;/g, ">")
+              .replace(/\s+/g, " ")
+              .trim();
+          }
+
+          function parseSeverity(body) {
+            const header = String(body || "").split(/<!--\s*DESCRIPTION START\s*-->/i)[0];
+            const patterns = [
+              /\*\*\s*(Critical|High|Medium|Low)\s+Severity\s*\*\*/i,
+              /\((Critical|High|Medium|Low)\s+Severity\)/i,
+              /\bSeverity:\s*(Critical|High|Medium|Low)\b/i,
+            ];
+            for (const pattern of patterns) {
+              const match = header.match(pattern);
+              if (match) return match[1].toLowerCase();
+            }
+            return "";
+          }
+
+          function parseFinding(body) {
+            const text = String(body || "");
+            const title = (text.match(/^###\s+(.+)\s*$/m) || [])[1]?.trim() || "";
+            const described = text.match(/<!--\s*DESCRIPTION START\s*-->([\s\S]*?)<!--\s*DESCRIPTION END\s*-->/i);
+            let description = "";
+            if (described) {
+              description = visibleText(described[1]);
+            } else {
+              const chunk = text.split(/<!--\s*BUGBOT_BUG_ID:/i)[0] || text;
+              description = visibleText(
+                chunk
+                  .replace(/^###.*$/m, "")
+                  .replace(/\*\*\s*(?:Critical|High|Medium|Low)\s+Severity\s*\*\*/gi, "")
+              );
+            }
+            const id = (text.match(/BUGBOT_BUG_ID:\s*([0-9a-f-]+)/i) || [])[1] || "";
+            return { id, title, severity: parseSeverity(text), description };
+          }
+
+          function decisionForFinding(finding, keywords) {
+            const hits = keywordHits(`${finding.title}\n${finding.description}`, keywords);
+            const severity = finding.severity || "";
+            const high = severity === "high" || severity === "critical";
+            const parts = [];
+            if (high) parts.push(`severity ${severity}`);
+            if (hits.length) parts.push(`keywords ${hits.join(", ")}`);
+            return {
+              label: high || hits.length > 0,
+              reason: parts.join("; ") || "below High and no security keyword",
+              hits,
+            };
+          }
+
+          function isBugbotFindingComment(comment, sha) {
+            if (!comment || comment.in_reply_to_id) return false;
+            if (comment.user?.login !== "cursor[bot]") return false;
+            if (sha && comment.commit_id !== sha) return false;
+            return String(comment.body || "").includes("BUGBOT_BUG_ID");
+          }
+
+          function writeSummary(markdown) {
+            const path = process.env.GITHUB_STEP_SUMMARY;
+            if (!path) return;
+            fs.appendFileSync(path, `${markdown}\n`);
+          }
+
+          async function gh(path, { method = "GET", body } = {}) {
+            const url = path.startsWith("http") ? path : `https://api.github.com${path}`;
+            let lastError = null;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              const response = await fetch(url, {
+                method,
+                headers: {
+                  Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+                  Accept: "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "bugbot-security-label",
+                  ...(body ? { "Content-Type": "application/json" } : {}),
+                },
+                body: body ? JSON.stringify(body) : undefined,
+              });
+              const text = await response.text();
+              let data = null;
+              if (text) {
+                try {
+                  data = JSON.parse(text);
+                } catch {
+                  data = text;
+                }
+              }
+              if (response.ok) return { data, headers: response.headers };
+              const message = data && typeof data === "object" ? data.message : text;
+              lastError = new Error(`${method} ${url} failed (${response.status}): ${message}`);
+              const retry = response.status === 429 || response.status >= 500;
+              if (!retry || attempt === 3) throw lastError;
+              await sleep(1000 * attempt);
+            }
+            throw lastError;
+          }
+
+          async function ghPaged(path) {
+            const items = [];
+            let next = `https://api.github.com${path}${path.includes("?") ? "&" : "?"}per_page=100`;
+            while (next) {
+              const { data, headers } = await gh(next);
+              if (!Array.isArray(data)) {
+                throw new Error(`Expected an array from ${path}`);
+              }
+              items.push(...data);
+              const link = headers.get("link") || "";
+              const match = link.match(/<([^>]+)>;\s*rel="next"/);
+              next = match ? match[1] : null;
+            }
+            return items;
+          }
+
+          async function pullRequestNumbers(repo, sha, eventPulls) {
+            const numbers = new Set();
+            for (const pr of eventPulls || []) {
+              if (pr && pr.number) numbers.add(pr.number);
+            }
+            try {
+              const pulls = await ghPaged(`/repos/${repo}/commits/${sha}/pulls`);
+              for (const pr of pulls) {
+                if (pr && pr.number) numbers.add(pr.number);
+              }
+            } catch (error) {
+              if (numbers.size === 0) throw error;
+              console.log(`Could not list pull requests for ${sha} (${error.message}). Using the check payload.`);
+            }
+            return [...numbers];
+          }
+
+          async function logBugbotCheck(repo, sha) {
+            try {
+              const { data } = await gh(
+                `/repos/${repo}/commits/${sha}/check-runs?check_name=${encodeURIComponent("Cursor Bugbot")}&per_page=20`
+              );
+              const runs = (data.check_runs || []).filter((run) => run.name === "Cursor Bugbot");
+              if (runs.length === 0) {
+                console.log(`No Cursor Bugbot check run is visible yet for ${sha}.`);
+                return;
+              }
+              const latest = runs.sort((a, b) =>
+                String(b.completed_at || b.started_at || "").localeCompare(String(a.completed_at || a.started_at || ""))
+              )[0];
+              console.log(
+                `Cursor Bugbot check ${latest.id} status=${latest.status} conclusion=${latest.conclusion || "pending"} completed_at=${latest.completed_at || "n/a"}`
+              );
+            } catch (error) {
+              console.log(`Could not read check runs (${error.message}). Continuing from the Bugbot review.`);
+            }
+          }
+
+          async function loadFindings(repo, number, sha) {
+            const comments = await ghPaged(`/repos/${repo}/pulls/${number}/comments`);
+            const findings = [];
+            const seen = new Set();
+            for (const comment of comments) {
+              if (!isBugbotFindingComment(comment, sha)) continue;
+              const finding = parseFinding(comment.body);
+              const key = finding.id || `${comment.id}`;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              findings.push(finding);
+            }
+            return findings;
+          }
+
+          async function loadFindingsWithWait(repo, number, sha) {
+            const deadline = Date.now() + Number(process.env.COMMENT_POLL_MS || "45000");
+            const interval = Number(process.env.COMMENT_POLL_INTERVAL_MS || "5000");
+            let findings = await loadFindings(repo, number, sha);
+            while (findings.length === 0 && Date.now() < deadline) {
+              console.log("Bugbot finding comments are not on the head commit yet. Waiting for the review to land.");
+              await sleep(interval);
+              findings = await loadFindings(repo, number, sha);
+            }
+            return findings;
+          }
+
+          async function hasLabel(repo, number, label) {
+            const labels = await ghPaged(`/repos/${repo}/issues/${number}/labels`);
+            return labels.some((item) => item.name === label);
+          }
+
+          async function considerPullRequest({ repo, number, sha, keywords, label }) {
+            const { data: pr } = await gh(`/repos/${repo}/pulls/${number}`);
+            if (pr.state !== "open") {
+              console.log(`PR #${number} is ${pr.state}. Not labeling.`);
+              return;
+            }
+            if (pr.head.sha !== sha) {
+              console.log(`PR #${number} head ${pr.head.sha} is not Bugbot commit ${sha}. Skipping a stale result.`);
+              return;
+            }
+            const findings = await loadFindingsWithWait(repo, number, sha);
+            if (findings.length === 0) {
+              const message = `No Bugbot finding comments on ${sha} for PR #${number}. If the review is still landing, the pull_request_review run will apply the label.`;
+              console.log(message);
+              writeSummary(message);
+              return;
+            }
+            const qualifying = [];
+            for (const finding of findings) {
+              const decision = decisionForFinding(finding, keywords);
+              const name = finding.title || finding.id || "(untitled)";
+              console.log(
+                `Finding "${name}" severity=${finding.severity || "unknown"} -> ${decision.label ? "qualify" : "skip"} (${decision.reason})`
+              );
+              if (decision.label) qualifying.push({ finding, decision });
+            }
+            if (qualifying.length === 0) {
+              const message = `Bugbot findings on PR #${number} are below High and not security-related. Not labeling.`;
+              console.log(message);
+              writeSummary(message);
+              return;
+            }
+            const lines = qualifying.map(({ finding, decision }) => {
+              const name = finding.title || finding.id || "(untitled)";
+              return `- ${name} (${decision.reason})`;
+            });
+            if (await hasLabel(repo, number, label)) {
+              const message = `\`${label}\` is already on PR #${number}. Not adding it again.`;
+              console.log(message);
+              writeSummary(`${message}\n${lines.join("\n")}`);
+              return;
+            }
+            if (process.env.DRY_RUN === "1") {
+              console.log(`DRY_RUN set. Would add ${label} to PR #${number}.`);
+              return;
+            }
+            // POST adds this label and does not remove or replace any other label.
+            await gh(`/repos/${repo}/issues/${number}/labels`, {
+              method: "POST",
+              body: { labels: [label] },
+            });
+            const message = `Added \`${label}\` to PR #${number}.`;
+            console.log(message);
+            writeSummary(`${message}\n${lines.join("\n")}`);
+          }
+
+          async function fromCheckRun(event, repo, keywords, label) {
+            const check = event.check_run || {};
+            if (check.name !== "Cursor Bugbot") {
+              console.log(`Ignoring check run ${check.name || "(unnamed)"}.`);
+              return;
+            }
+            if (check.app?.slug && check.app.slug !== "cursor") {
+              console.log(`Ignoring a check named Cursor Bugbot from app ${check.app.slug}.`);
+              return;
+            }
+            console.log(
+              `Cursor Bugbot check completed with conclusion ${check.conclusion || "unknown"} for ${check.head_sha}.`
+            );
+            const summary = `${check.output?.title || ""}\n${check.output?.summary || ""}`;
+            if (bugbotReportedNoIssues(summary)) {
+              const message = "Bugbot reported no issues. Not labeling.";
+              console.log(message);
+              writeSummary(message);
+              return;
+            }
+            const sha = check.head_sha;
+            const numbers = await pullRequestNumbers(repo, sha, check.pull_requests);
+            if (numbers.length === 0) {
+              console.log(`No pull request is associated with ${sha}.`);
+              return;
+            }
+            for (const number of numbers) {
+              await considerPullRequest({ repo, number, sha, keywords, label });
+            }
+          }
+
+          async function fromReview(event, repo, keywords, label) {
+            const review = event.review || {};
+            const login = review.user?.login || "";
+            if (login !== "cursor[bot]") {
+              console.log(`Ignoring review from ${login || "unknown"}.`);
+              return;
+            }
+            const body = String(review.body || "");
+            if (!body.includes("BUGBOT_REVIEW")) {
+              console.log("Ignoring a cursor[bot] review that is not a Bugbot review.");
+              return;
+            }
+            const pr = event.pull_request || {};
+            const sha = pr.head?.sha;
+            if (review.commit_id && sha && review.commit_id !== sha) {
+              console.log(`Review commit ${review.commit_id} is not the current head ${sha}. Skipping.`);
+              return;
+            }
+            if (bugbotReportedNoIssues(body)) {
+              const message = "Bugbot review reports no issues. Not labeling.";
+              console.log(message);
+              writeSummary(message);
+              return;
+            }
+            console.log(`Bugbot review ${review.id} submitted for PR #${pr.number} at ${sha}.`);
+            await logBugbotCheck(repo, sha);
+            await considerPullRequest({ repo, number: pr.number, sha, keywords, label });
+          }
+
+          async function main() {
+            const eventName = process.env.GITHUB_EVENT_NAME || "";
+            const eventPath = process.env.GITHUB_EVENT_PATH;
+            const repo = process.env.GITHUB_REPOSITORY;
+            const keywords = parseKeywords(process.env.SECURITY_KEYWORDS);
+            const label = process.env.SECURITY_LABEL || LABEL_DEFAULT;
+            if (!eventPath) throw new Error("GITHUB_EVENT_PATH is not set");
+            if (!repo) throw new Error("GITHUB_REPOSITORY is not set");
+            if (!process.env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set");
+            if (keywords.length === 0) throw new Error("SECURITY_KEYWORDS is empty");
+            const event = JSON.parse(fs.readFileSync(eventPath, "utf8"));
+            if (eventName === "check_run") {
+              await fromCheckRun(event, repo, keywords, label);
+              return;
+            }
+            if (eventName === "pull_request_review") {
+              await fromReview(event, repo, keywords, label);
+              return;
+            }
+            console.log(`Ignoring event ${eventName || "(unset)"}.`);
+          }
+
+          function selfTest() {
+            const keywords = [
+              "xss",
+              "cross-site scripting",
+              "cross-site-scripting",
+              "cross site scripting",
+              "injection",
+              "sql",
+              "ssrf",
+              "open redirect",
+              "open-redirect",
+              "auth",
+              "authentication",
+              "authorization",
+              "unauthenticated",
+              "unauthorized",
+              "secret",
+              "credential",
+              "path traversal",
+              "path-traversal",
+              "directory traversal",
+              "deserializ",
+              "csrf",
+              "cross-site request forgery",
+            ];
+            const xss = parseFinding(`### Reflected XSS in preview
+
+          **High Severity**
+
+          <!-- DESCRIPTION START -->
+          \`GET /preview\` interpolates the message query into HTML without escapeHtml. That is cross-site scripting.
+          <!-- DESCRIPTION END -->
+
+          <!-- BUGBOT_BUG_ID: 7081f8fe-35e0-403d-91d3-e20450b12a70 -->`);
+            const auth = parseFinding(`### Unauthenticated preview endpoint
+
+          **Medium Severity**
+
+          <!-- DESCRIPTION START -->
+          The new GET /preview handler is registered without authentication middleware.
+          <!-- DESCRIPTION END -->
+
+          <!-- BUGBOT_BUG_ID: 53d91ccb-d466-488a-acef-0aaec91d03a6 -->`);
+            const typo = parseFinding(`### Typo in the harbor blurb
+
+          **Low Severity**
+
+          <!-- DESCRIPTION START -->
+          The blurb says quartet but the poster says trio.
+          <!-- DESCRIPTION END -->
+
+          <!-- BUGBOT_BUG_ID: 11111111-1111-1111-1111-111111111111 -->`);
+            const leak = parseFinding(`### N+1 query on the events page
+
+          **High Severity**
+
+          <!-- DESCRIPTION START -->
+          The homepage loads each venue with its own query.
+          <!-- DESCRIPTION END -->
+
+          <!-- BUGBOT_BUG_ID: 22222222-2222-2222-2222-222222222222 -->`);
+            const sql = parseFinding(`### Receipt lookup concatenates input
+
+          **Low Severity**
+
+          <!-- DESCRIPTION START -->
+          The id parameter is concatenated into a SQL statement.
+          <!-- DESCRIPTION END -->
+
+          <!-- BUGBOT_BUG_ID: 33333333-3333-3333-3333-333333333333 -->`);
+            const author = parseFinding(`### Author name is stored raw
+
+          **Medium Severity**
+
+          <!-- DESCRIPTION START -->
+          The author field is longer than the column.
+          <!-- DESCRIPTION END -->
+
+          <!-- BUGBOT_BUG_ID: 44444444-4444-4444-4444-444444444444 -->`);
+            const redirect = parseFinding(`### Next hops off site
+
+          (Low Severity)
+
+          <!-- DESCRIPTION START -->
+          query.next is an open redirect.
+          <!-- DESCRIPTION END -->
+
+          <!-- BUGBOT_BUG_ID: 55555555-5555-5555-5555-555555555555 -->`);
+
+            function assert(condition, message) {
+              if (!condition) throw new Error(message);
+            }
+
+            assert(xss.severity === "high" && xss.title === "Reflected XSS in preview", "xss parse");
+            assert(decisionForFinding(xss, keywords).label, "high xss should qualify");
+            assert(decisionForFinding(xss, keywords).hits.includes("xss"), "xss keyword");
+            assert(auth.severity === "medium", "auth severity");
+            assert(decisionForFinding(auth, keywords).label, "unauthenticated medium should qualify");
+            assert(
+              decisionForFinding(auth, keywords).hits.includes("unauthenticated") ||
+                decisionForFinding(auth, keywords).hits.includes("authentication"),
+              "auth keywords"
+            );
+            assert(!decisionForFinding(typo, keywords).label, "typo should not qualify");
+            assert(decisionForFinding(leak, keywords).label, "high non-security should qualify");
+            assert(!decisionForFinding(leak, keywords).hits.includes("sql"), "query is not sql");
+            assert(decisionForFinding(sql, keywords).label, "low sql should qualify");
+            assert(!decisionForFinding(author, keywords).label, "author must not match auth");
+            assert(decisionForFinding(redirect, keywords).label, "open redirect should qualify");
+            assert(redirect.severity === "low", "paren severity");
+            assert(
+              !isBugbotFindingComment(
+                {
+                  user: { login: "cursor[bot]" },
+                  commit_id: "abc",
+                  body: "Severity: HIGH\nreflected XSS\nAgentic Security Review",
+                },
+                "abc"
+              ),
+              "security reviewer comment is not a bugbot finding"
+            );
+            assert(
+              isBugbotFindingComment(
+                {
+                  user: { login: "cursor[bot]" },
+                  commit_id: "abc",
+                  body: "<!-- BUGBOT_BUG_ID: 7081f8fe-35e0-403d-91d3-e20450b12a70 -->",
+                },
+                "abc"
+              ),
+              "bugbot comment"
+            );
+            assert(
+              !isBugbotFindingComment(
+                {
+                  user: { login: "cursor[bot]" },
+                  commit_id: "old",
+                  body: "<!-- BUGBOT_BUG_ID: 7081f8fe-35e0-403d-91d3-e20450b12a70 -->",
+                },
+                "abc"
+              ),
+              "stale commit ignored"
+            );
+            assert(
+              bugbotReportedNoIssues(
+                "Final Result: Bugbot completed review - no issues found!"
+              ),
+              "clean summary"
+            );
+            assert(
+              !bugbotReportedNoIssues(
+                "Final Result: Bugbot completed review and found 2 potential issues."
+              ),
+              "issues summary"
+            );
+            assert(!keywordHits("use sqlite for this", ["sql"]).length, "sqlite is not sql");
+            console.log("self-test ok");
+          }
+
+          if (require.main === module) {
+            const run = process.argv.includes("--self-test") ? Promise.resolve().then(selfTest) : main();
+            run.catch((error) => {
+              console.error(error);
+              process.exit(1);
+            });
+          }
+
+          module.exports = {
+            parseFinding,
+            keywordHits,
+            decisionForFinding,
+            bugbotReportedNoIssues,
+            isBugbotFindingComment,
+          };
+          NODE
+          node "$script"
