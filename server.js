@@ -147,7 +147,21 @@ app.post("/login", (req, res) => {
   res.redirect(safeNext(req.body.next));
 });
 
-app.get("/preview", (req, res) => {
+// Public routes allowlist. A handler may skip authentication only when it is listed here.
+const publicRoutes = new Set([
+  // Shared listing notes are readable before sign-in.
+  "/preview",
+]);
+
+function requireAuth(req, res, next) {
+  if (publicRoutes.has(req.path)) {
+    next();
+    return;
+  }
+  res.redirect(`/login?next=${encodeURIComponent(safeNext(req.originalUrl))}`);
+}
+
+app.get("/preview", requireAuth, (req, res) => {
   const message = typeof req.query.message === "string" ? req.query.message : "";
   res.type("html").send(
     layout(
