@@ -3,7 +3,7 @@
 
 # Row Nine demo runbook
 
-Small event-ticketing app used to show a seeded pull request moving through scan, ticket, fix, and close.
+Small event-ticketing app used to show a seeded pull request moving through scan, ticket, fix, and close. This page is the operator runbook.
 
 ## What this demo shows
 
