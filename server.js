@@ -147,6 +147,30 @@ app.post("/login", (req, res) => {
   res.redirect(safeNext(req.body.next));
 });
 
+function queryOrders(sql) {
+  return sql ? [{ sql }] : [];
+}
+
+app.get("/receipt", (req, res) => {
+  const id = typeof req.query.id === "string" ? req.query.id : "";
+  const customer = typeof req.query.customer === "string" ? req.query.customer : "";
+  const sql = "SELECT id, email, total FROM orders WHERE id = '" + id + "'";
+  const rows = queryOrders(sql);
+  res.type("html").send(
+    layout(
+      "Receipt",
+      `<h1>Receipt</h1>
+       <form>
+         <input name="id" value="${escapeHtml(id)}" placeholder="Order id">
+         <input name="customer" value="${escapeHtml(customer)}" placeholder="Name on the order">
+         <button>Look up</button>
+       </form>
+       ${customer ? `<div class="card">${customer}</div>` : ""}
+       <p class="muted">${rows.length} order</p>`
+    )
+  );
+});
+
 app.use((req, res) => {
   res.status(404).type("html").send(layout("Not found", "<h1>Not found</h1>"));
 });
