@@ -59,7 +59,7 @@ function layout(title, body) {
 <body>
   <header>
     <strong><a href="/">Row Nine</a></strong>
-    <nav><a href="/search">Search</a> · <a href="/login">Sign in</a></nav>
+    <nav><a href="/search">Search</a> · <a href="/preview">Preview</a> · <a href="/login">Sign in</a></nav>
   </header>
   ${body}
 </body>
@@ -145,6 +145,22 @@ app.get("/login", (req, res) => {
 
 app.post("/login", (req, res) => {
   res.redirect(safeNext(req.body.next));
+});
+
+app.get("/preview", (req, res) => {
+  const message = typeof req.query.message === "string" ? req.query.message : "";
+  res.type("html").send(
+    layout(
+      "Preview",
+      `<h1>Listing preview</h1>
+       <p class="muted">Draft the note that appears on a shared listing.</p>
+       <form>
+         <input name="message" value="${escapeHtml(message)}" placeholder="Doors at 7">
+         <button>Preview</button>
+       </form>
+       ${message ? `<div class="card">${message}</div>` : ""}`
+    )
+  );
 });
 
 app.use((req, res) => {
