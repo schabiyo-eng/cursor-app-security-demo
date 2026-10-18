@@ -49,12 +49,26 @@ EOF
 COPY egress-proxy.sh /usr/local/bin/egress-proxy.sh
 RUN chmod 755 /usr/local/bin/egress-proxy.sh
 
-# After apt, so image builds do not send package downloads through tinyproxy.
-ENV HTTP_PROXY=http://127.0.0.1:8888 \
-    HTTPS_PROXY=http://127.0.0.1:8888 \
-    http_proxy=http://127.0.0.1:8888 \
-    https_proxy=http://127.0.0.1:8888 \
-    NO_PROXY=localhost,127.0.0.1 \
-    no_proxy=localhost,127.0.0.1
+# Login shells source this. PAM reads /etc/environment. These are not Docker
+# ENV: draft build bld-20261018-a9a97829-3cf2-4ad2-9903-0d11e4922846 injected
+# image ENV into setup, and exec-daemon curl ran before `start`:
+#   curl: (7) Failed to connect to 127.0.0.1 port 8888 after 0 ms: Couldn't connect to server
+RUN cat > /etc/profile.d/egress-proxy.sh <<'EOF'
+export HTTP_PROXY=http://127.0.0.1:8888
+export HTTPS_PROXY=http://127.0.0.1:8888
+export http_proxy=http://127.0.0.1:8888
+export https_proxy=http://127.0.0.1:8888
+export NO_PROXY=localhost,127.0.0.1
+export no_proxy=localhost,127.0.0.1
+EOF
+RUN chmod 644 /etc/profile.d/egress-proxy.sh \
+    && cat >> /etc/environment <<'EOF'
+HTTP_PROXY=http://127.0.0.1:8888
+HTTPS_PROXY=http://127.0.0.1:8888
+http_proxy=http://127.0.0.1:8888
+https_proxy=http://127.0.0.1:8888
+NO_PROXY=localhost,127.0.0.1
+no_proxy=localhost,127.0.0.1
+EOF
 
 USER ubuntu
