@@ -5,10 +5,12 @@
 #   install  apt-install tinyproxy, nftables, and redsocks; persist proxy env
 #   start    start tinyproxy and force tcp/80 and tcp/443 through it
 #
-# Called from .cursor/environment.json. The Dockerfile copies this file to
-# /usr/local/bin/egress-proxy.sh and start runs that copy:
+# Called from .cursor/environment.json on the default Cursor VM.
+# .cursor/Dockerfile is unused.
 #   install runs once per environment build
 #   start runs detached on every agent boot (bash -l, not awaited)
+#   start apt-installs tinyproxy, nftables, and redsocks when missing,
+#   starts them, applies the nft dnat, then writes proxy variables
 #
 # Force path: nft dnat sends new tcp/80 and tcp/443, except the tinyproxy
 # user, to redsocks. redsocks reads the original destination and opens
@@ -376,9 +378,8 @@ main() {
   case "$cmd" in
     install)
       install_packages
-      # Do not publish proxy variables here. The image build runs install
-      # before tinyproxy exists, and a login shell would then point curl at
-      # 127.0.0.1:8888.
+      # Do not publish proxy variables here. install runs before start,
+      # and a login shell would then point curl at 127.0.0.1:8888.
       log "install complete"
       ;;
     start)
