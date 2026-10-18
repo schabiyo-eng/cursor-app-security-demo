@@ -376,18 +376,21 @@ main() {
   case "$cmd" in
     install)
       install_packages
-      write_shell_env
+      # Do not publish proxy variables here. The image build runs install
+      # before tinyproxy exists, and a login shell would then point curl at
+      # 127.0.0.1:8888.
       log "install complete"
       ;;
     start)
       install_packages
-      write_shell_env
       # Remove a previous boot's force rule before restarting helpers so a
       # failed start cannot black-hole tcp/80 and tcp/443.
       clear_force_rules
       start_proxy
       start_redsocks
       apply_force_rules
+      # Publish proxy variables only after the listener is up.
+      write_shell_env
       log "start complete"
       ;;
     *)
