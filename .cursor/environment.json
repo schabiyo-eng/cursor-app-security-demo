@@ -1,0 +1,5 @@
+{
+  "name": "egress-proxy-lab",
+  "install": "bash .cursor/egress-proxy.sh install",
+  "start": "bash .cursor/egress-proxy.sh start"
+}
