@@ -5,7 +5,8 @@
 #   install  apt-install tinyproxy, nftables, and redsocks; persist proxy env
 #   start    start tinyproxy and force tcp/80 and tcp/443 through it
 #
-# Called from .cursor/environment.json:
+# Called from .cursor/environment.json. The Dockerfile copies this file to
+# /usr/local/bin/egress-proxy.sh and start runs that copy:
 #   install runs once per environment build
 #   start runs detached on every agent boot (bash -l, not awaited)
 #

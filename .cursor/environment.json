@@ -1,5 +1,9 @@
 {
   "name": "egress-proxy-lab",
-  "install": "bash .cursor/egress-proxy.sh install",
-  "start": "bash .cursor/egress-proxy.sh start"
+  "user": "ubuntu",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "install": "bash /usr/local/bin/egress-proxy.sh install",
+  "start": "bash /usr/local/bin/egress-proxy.sh start"
 }
